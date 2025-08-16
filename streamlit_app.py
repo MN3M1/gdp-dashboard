@@ -771,9 +771,6 @@ admin_dashboard = AdminDashboard(db, bot)
 user_sessions = {}
 
 
-stop_keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-stop_keyboard.add(telebot.types.KeyboardButton("STOP🛑"))
-
 def print_colored(text, color):
     colors = {
         'red': '\033[91m',
@@ -991,7 +988,7 @@ def run_script(chat_id):
     
     while user_sessions.get(chat_id, {}).get('running', False):
         try:
-            time.sleep(20)
+            time.sleep(30)
             consumed, remaining, total = check_consumption(msisdn, auth_token, cookies, chat_id)
             
             if consumed is not None and total is not None:
@@ -1025,9 +1022,6 @@ def run_script(chat_id):
                     bot.send_message(chat_id, "❌ERROR")
                     user_sessions[chat_id]['running'] = False
                     break
-
-            
-            time.sleep(10)
 
         except Exception as e:
             logging.error(f"An unexpected error occurred for user {chat_id}: {e}")
@@ -1099,7 +1093,7 @@ def send_welcome(message):
         return
 
     if chat_id in user_sessions and user_sessions[chat_id].get('running', False):
-        bot.send_message(chat_id, "THE BOT IS RUNNIG IF YOU WANT TO STOP IT PRESS STOP")
+        bot.send_message(chat_id, "THE BOT IS RUNNIG IF YOU WANT TO STOP IT USE /stop")
         return
     
     user_sessions[chat_id] = {'running': False}
@@ -1108,7 +1102,7 @@ def send_welcome(message):
     start_message = db.get_setting('start_message')
     
     bot.send_message(chat_id, start_message)
-    bot.send_message(chat_id, "📞 SEND MOBILE NUMBER:")
+    bot.send_message(chat_id, "أرسل البيانات بالصيغة التالية: رقم الهاتف:البريد الإلكتروني:كلمة المرور")
 
 @bot.message_handler(commands=['admin'])
 def show_admin_panel(message):
@@ -1126,7 +1120,7 @@ def handle_admin_callback(call):
 def handle_admin_state_message(message):
     pass
 
-@bot.message_handler(func=lambda message: message.text == "STOP🛑")
+@bot.message_handler(commands=['stop'])
 def stop_script(message):
     chat_id = message.chat.id
     
@@ -1138,13 +1132,13 @@ def stop_script(message):
         
     if chat_id in user_sessions and user_sessions[chat_id].get('running', False):
         user_sessions[chat_id]['running'] = False
-        bot.send_message(chat_id, "⏹BOT STOPPED", reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.send_message(chat_id, "⏹BOT STOPPED")
         logging.info(f"User {chat_id} stopped the script.")
     else:
         bot.send_message(chat_id, "❌ENTER YOUR ACCOUNT INFO FIRST!\n\n/start")
 
-@bot.message_handler(func=lambda message: message.text and not user_sessions.get(message.chat.id, {}).get('msisdn'))
-def get_number(message):
+@bot.message_handler(func=lambda message: True and not user_sessions.get(message.chat.id, {}).get('running', False))
+def get_credentials(message):
     chat_id = message.chat.id
     
     if not db.get_setting('bot_enabled') and not db.is_admin(chat_id):
@@ -1164,84 +1158,42 @@ def get_number(message):
         )
         return
 
-    phone_number = message.text.strip()
-    
+    input_text = message.text.strip()
+    parts = input_text.split(':')
+    if len(parts) != 3:
+        bot.send_message(chat_id, "❌ تنسيق غير صحيح! أرسل: رقم الهاتف:البريد الإلكتروني:كلمة المرور")
+        return
+
+    phone_number, email, password = parts
     
     if phone_number.startswith('0') and len(phone_number) == 11 and phone_number.isdigit():
         processed_number = phone_number[1:]
     elif len(phone_number) == 10 and phone_number.isdigit():
         processed_number = phone_number
     else:
-        bot.send_message(chat_id, "❌INVAILD NUMBER! Please send a valid 10 or 11-digit number.")
+        bot.send_message(chat_id, "❌ رقم هاتف غير صالح! يجب أن يكون 10 أو 11 رقمًا.")
         return
     
-    user_sessions[chat_id]['msisdn'] = processed_number
-    logging.info(f"User {chat_id} provided phone number: {processed_number}.")
-    bot.send_message(chat_id, "📧ENTER EMAIL:")
-
-@bot.message_handler(func=lambda message: message.text and user_sessions.get(message.chat.id, {}).get('msisdn') and not user_sessions.get(message.chat.id, {}).get('email'))
-def get_email(message):
-    chat_id = message.chat.id
-    
-    if not db.get_setting('bot_enabled') and not db.is_admin(chat_id):
-        return
-        
-    if db.is_banned(chat_id):
-        return
-
-    is_subscribed, missing_channel = check_subscription(chat_id)
-    if not is_subscribed:
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton("Join Channel", url=f"https://t.me/{missing_channel}"))
-        bot.send_message(
-            chat_id,
-            f"⚠️ Please join our channel to use the bot: https://t.me/{missing_channel}",
-            reply_markup=keyboard
-        )
-        return
-        
-    if '@' not in message.text or '.' not in message.text:
-        bot.send_message(chat_id, "❌INVAILD EMAIL!")
+    if '@' not in email or '.' not in email:
+        bot.send_message(chat_id, "❌ بريد إلكتروني غير صالح!")
         return
     
-    user_sessions[chat_id]['email'] = message.text
-    logging.info(f"User {chat_id} provided email.")
-    bot.send_message(chat_id, "🔑ENTER PASSWORD:")
-
-@bot.message_handler(func=lambda message: message.text and user_sessions.get(message.chat.id, {}).get('email') and not user_sessions.get(message.chat.id, {}).get('password'))
-def get_password(message):
-    chat_id = message.chat.id
-    
-    if not db.get_setting('bot_enabled') and not db.is_admin(chat_id):
-        return
-        
-    if db.is_banned(chat_id):
-        return
-
-    is_subscribed, missing_channel = check_subscription(chat_id)
-    if not is_subscribed:
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton("Join Channel", url=f"https://t.me/{missing_channel}"))
-        bot.send_message(
-            chat_id,
-            f"⚠️ Please join our channel to use the bot: https://t.me/{missing_channel}",
-            reply_markup=keyboard
-        )
+    if len(password) < 4:
+        bot.send_message(chat_id, "❌ كلمة المرور قصيرة جدًا!")
         return
     
-    if len(message.text) < 4:
-        bot.send_message(chat_id, "❌ THE PASSWORD IS TOO SHORT !")
-        return
+    user_sessions[chat_id] = {
+        'msisdn': processed_number,
+        'email': email,
+        'password': password,
+        'running': True
+    }
+    logging.info(f"User {chat_id} provided credentials. Starting script...")
+    bot.send_message(chat_id, "🔄 انتظر...........")
     
-    user_sessions[chat_id]['password'] = message.text
-    logging.info(f"User {chat_id} provided password. Starting script...")
-    bot.send_message(chat_id, "🔄WAIT...........", reply_markup=stop_keyboard)
     
-    
-    user_sessions[chat_id]['running'] = True
     thread = threading.Thread(target=run_script, args=(chat_id,))
     thread.start()
-
 
 @bot.message_handler(func=lambda message: True)
 def default_handler(message):
