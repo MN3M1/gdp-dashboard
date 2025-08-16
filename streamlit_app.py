@@ -18,7 +18,6 @@ ADMIN_ID = 706440281
 BOT_TOKEN = "8136616031:AAGRPJ832iKX_J72GglmoyYSdawKJgfrgXI"
 
 
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
@@ -58,12 +57,14 @@ class Database:
             # Add some default settings if they don't exist
             self.set_setting('bot_enabled', True)
             self.set_setting('subscription_enabled', False)
-            self.set_setting('subscription_channels', json.dumps([]))
-            self.set_setting('required_subscriptions', '1')
+            # Correctly initialize subscription_channels with an empty list. The set_setting method will handle the JSON conversion.
+            if self.get_setting('subscription_channels') is None:
+                self.set_setting('subscription_channels', [])
+
             self.set_setting('join_notifications', True)
             self.set_setting('forward_messages', True)
             self.set_setting('start_message', "اهلا، بوت 100 ميجا اتصالات متجدده 😂🔥\n\nDevs:@W555W1/@M_N_3_M/@HY_49❤️‍🔥")
-
+            
             self.add_admin(ADMIN_ID)
 
     def add_user(self, user_id, first_name, last_name, username):
@@ -86,14 +87,12 @@ class Database:
             value = result[0]
             if key == 'subscription_channels':
                 try:
-                    return json.loads(value) if value else []
-                except:
-                    return []
-            if key == 'required_subscriptions':
-                try:
-                    return int(value) if value else 1
-                except:
-                    return 1
+                    # Try to load as a list from JSON
+                    return json.loads(value)
+                except (json.JSONDecodeError, TypeError):
+                    # If it's not a valid JSON list, assume it's a single channel string
+                    # and return it as a list. This handles old database entries.
+                    return [value] if value else []
             if value in ('True', 'False'):
                 return value == 'True'
             return value
@@ -103,7 +102,7 @@ class Database:
         with self.conn:
             if key == 'subscription_channels':
                 value = json.dumps(value)
-            elif isinstance(value, (bool, int)):
+            elif isinstance(value, bool):
                 value = str(value)
             self.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
@@ -130,7 +129,7 @@ class Database:
     def get_banned_users(self):
         self.cursor.execute("SELECT id FROM banned_users")
         return [row[0] for row in self.cursor.fetchall()]
-
+        
     def ban_user(self, user_id):
         with self.conn:
             self.cursor.execute("INSERT OR IGNORE INTO banned_users (id) VALUES (?)", (user_id,))
@@ -138,7 +137,7 @@ class Database:
     def unban_user(self, user_id):
         with self.conn:
             self.cursor.execute("DELETE FROM banned_users WHERE id=?", (user_id,))
-
+            
     def clear_users(self):
         with self.conn:
             self.cursor.execute("DELETE FROM users")
@@ -148,18 +147,17 @@ class Database:
             self.cursor.execute("DELETE FROM banned_users")
 
 
-
 class AdminDashboard:
     def __init__(self, db, bot):
         self.db = db
         self.bot = bot
         self.admin_states = {}
-
+    
     def show_admin_menu(self, message):
         """Show main admin menu"""
         user_count = self.db.get_user_count()
         admin_count = len(self.db.get_admins())
-
+        
         keyboard = types.InlineKeyboardMarkup()
         keyboard.row(types.InlineKeyboardButton("📈 Statistics", callback_data="admin_stats"))
         keyboard.row(
@@ -175,14 +173,14 @@ class AdminDashboard:
             types.InlineKeyboardButton("🔧 Bot Settings", callback_data="admin_bot_settings"),
             types.InlineKeyboardButton("🚫 Ban Management", callback_data="admin_ban_management")
         )
-
-
+        
+        
         text = f"🤖 *- Admin Panel* 🔽\n⎯ ⎯ ⎯ ⎯ ⎯ ⎯ ⎯ ⎯\n"
         text += f"👥 Total Users: *{user_count}*\n"
         text += f"👨‍💼 Admins: *{admin_count}*\n"
         text += f"🤖 Bot Status: *{'✅ Active' if self.db.get_setting('bot_enabled') else '❌ Disabled'}*"
-
-
+        
+        
         self.bot.send_message(
             message.chat.id, text,
             parse_mode='Markdown', reply_markup=keyboard
@@ -218,85 +216,88 @@ class AdminDashboard:
             text, call.message.chat.id, call.message.message_id,
             parse_mode='Markdown', reply_markup=keyboard
         )
-
+    
     def handle_callback(self, call):
         """Handle admin callback queries"""
         data = call.data
         user_id = call.from_user.id
-
-
+        
+        
         if not (user_id == ADMIN_ID or self.db.is_admin(user_id)):
             self.bot.answer_callback_query(call.id, "❌ Access denied!")
             return
-
-
+        
+        
         self.bot.answer_callback_query(call.id)
-
+        
         try:
             if data == "admin_back":
                 return self.show_admin_menu_callback(call)
-
+            
             elif data == "admin_stats":
                 self.show_statistics(call)
-
+            
             elif data == "admin_set_start":
                 self.set_start_message_prompt(call)
-
+            
             elif data == "admin_subscription":
                 self.show_subscription_settings(call)
-
+            
             elif data == "admin_notifications":
                 self.show_notification_settings(call)
-
+            
             elif data == "admin_management":
                 self.show_admin_management(call)
-
+            
             elif data == "admin_broadcast":
                 self.broadcast_prompt(call)
-
+            
             elif data == "admin_bot_settings":
                 self.show_bot_settings(call)
-
+            
             elif data == "admin_ban_management":
                 self.show_ban_management(call)
-
+            
             elif data.startswith("admin_toggle_"):
                 self.handle_toggle(call, data)
-
+            
             elif data.startswith("admin_ban_") or data.startswith("admin_unban_"):
                 self.handle_ban_unban(call, data)
 
             elif data.startswith("admin_banned_list_"):
                 self.show_banned_list(call, data)
-
+            
             elif data.startswith("admin_user_list_"):
                 self.show_user_list(call, data)
 
+            elif data.startswith("admin_remove_channel_"):
+                self.handle_remove_channel(call, data)
+            
             elif data.startswith("admin_"):
                 self.handle_specific_admin_action(call, data)
-
+                
         except Exception as e:
             logging.error(f"Error in admin callback: {e}")
             self.bot.answer_callback_query(call.id, "❌ An error occurred!")
-
+    
     def show_statistics(self, call):
         """Show bot statistics"""
         user_count = self.db.get_user_count()
         admin_count = len(self.db.get_admins())
         banned_count = len(self.db.get_banned_users())
-
+        
         text = f"📈 *Bot Statistics*\n⎯ ⎯ ⎯ ⎯\n"
         text += f"👥 Total Users: {user_count}\n"
         text += f"👨‍💼 Admins: {admin_count}\n"
         text += f"🚫 Banned Users: {banned_count}\n"
-
+        
         keyboard = types.InlineKeyboardMarkup()
         keyboard.row(
             types.InlineKeyboardButton("👤 Show All Users", callback_data="admin_user_list_0"),
             types.InlineKeyboardButton("🚫 Show Banned Users", callback_data="admin_banned_list_0")
         )
-        keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_back"))
-
+        keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_stats"))
+        
         self.bot.edit_message_text(
             text, call.message.chat.id, call.message.message_id,
             parse_mode='Markdown', reply_markup=keyboard
@@ -307,29 +308,29 @@ class AdminDashboard:
         users = self.db.get_users()
         users_per_page = 10
         total_pages = math.ceil(len(users) / users_per_page)
-
+        
         start_index = page * users_per_page
         end_index = start_index + users_per_page
         current_users = users[start_index:end_index]
-
+        
         text = f"👤 *All Users* (Page {page + 1}/{total_pages})\n⎯ ⎯ ⎯ ⎯\n"
         if not current_users:
             text += "No users found."
         else:
             for user_id in current_users:
                 text += f"ID: `{user_id}`\n"
-
+        
         keyboard = types.InlineKeyboardMarkup()
-
+        
         nav_buttons = []
         if page > 0:
             nav_buttons.append(types.InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_user_list_{page-1}"))
         if page < total_pages - 1:
             nav_buttons.append(types.InlineKeyboardButton("➡️ Next", callback_data=f"admin_user_list_{page+1}"))
-
+        
         keyboard.row(*nav_buttons)
         keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_stats"))
-
+        
         self.bot.edit_message_text(
             text, call.message.chat.id, call.message.message_id,
             parse_mode='Markdown', reply_markup=keyboard
@@ -367,61 +368,74 @@ class AdminDashboard:
             text, call.message.chat.id, call.message.message_id,
             parse_mode='Markdown', reply_markup=keyboard
         )
-
+    
     def show_subscription_settings(self, call):
         """Show subscription settings"""
-        enabled = self.db.get_setting('subscription_enabled')
-        channels = self.db.get_setting('subscription_channels') or []
-        required = self.db.get_setting('required_subscriptions') or 1
-
-        text = f"📊 *Subscription Settings* 🔽\n⎯ ⎯ ⎯ ⎯\n"
-        text += f"Enabled: {'✅' if enabled else '❎'}\n"
-        text += f"Required Subscriptions: {required}\n"
-        text += "Channels:\n"
+        enabled = "✅" if self.db.get_setting('subscription_enabled') else "❎"
+        channels = self.db.get_setting('subscription_channels')
+        
+        text = f"📊 *Subscription Settings* 🔽\n"
+        text += f"Status: {enabled}\n⎯ ⎯ ⎯ ⎯\n"
+        text += "📢 Channels:\n"
         if channels:
-            for i, ch in enumerate(channels, 1):
-                text += f"{i}. @{ch}\n"
+            for channel in channels:
+                text += f"• `{channel}`\n"
         else:
-            text += "No channels set\n"
+            text += "No channels set.\n"
 
+        
         keyboard = types.InlineKeyboardMarkup()
-        keyboard.row(types.InlineKeyboardButton(f"Toggle Enabled {'✅' if enabled else '❎'}", callback_data="admin_toggle_subscription"))
-        keyboard.row(types.InlineKeyboardButton("Set Required Count", callback_data="admin_set_required"))
-        keyboard.row(types.InlineKeyboardButton("➕ Add Channel", callback_data="admin_add_channel"))
-        if channels:
-            for ch in channels:
-                keyboard.row(types.InlineKeyboardButton(f"🗑️ Remove @{ch}", callback_data=f"admin_remove_channel_{ch}"))
+        for channel in channels:
+            keyboard.row(types.InlineKeyboardButton(f"🗑️ Remove {channel}", callback_data=f"admin_remove_channel_{channel}"))
+        
+        keyboard.row(
+            types.InlineKeyboardButton("➕ Add Channel", callback_data="admin_add_channel")
+        )
+        keyboard.row(types.InlineKeyboardButton(f"Subscription {enabled}", callback_data="admin_toggle_subscription"))
         keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_back"))
-
+        
         self.bot.edit_message_text(
             text, call.message.chat.id, call.message.message_id,
             parse_mode='Markdown', reply_markup=keyboard
         )
-
+    
+    def handle_remove_channel(self, call, data):
+        channel_to_remove = data.split('_', 3)[-1]
+        channels = self.db.get_setting('subscription_channels')
+        
+        if channel_to_remove in channels:
+            channels.remove(channel_to_remove)
+            self.db.set_setting('subscription_channels', channels)
+            self.bot.answer_callback_query(call.id, f"✅ Channel '{channel_to_remove}' removed!")
+        else:
+            self.bot.answer_callback_query(call.id, f"❌ Channel '{channel_to_remove}' not found!")
+        
+        self.show_subscription_settings(call)
+    
     def show_notification_settings(self, call):
         """Show notification settings"""
         join_notif = "✅" if self.db.get_setting('join_notifications') else "❎"
         forward_msg = "✅" if self.db.get_setting('forward_messages') else "❎"
-
+        
         text = "ℹ️ *Notification Settings* 🔽\n⎯ ⎯ ⎯ ⎯"
-
+        
         keyboard = types.InlineKeyboardMarkup()
         keyboard.row(types.InlineKeyboardButton(f"Join Notifications {join_notif}", callback_data="admin_toggle_join_notif"))
         keyboard.row(types.InlineKeyboardButton(f"Forward Messages {forward_msg}", callback_data="admin_toggle_forward"))
         keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_back"))
-
+        
         self.bot.edit_message_text(
             text, call.message.chat.id, call.message.message_id,
             parse_mode='Markdown', reply_markup=keyboard
         )
-
+    
     def show_admin_management(self, call):
         """Show admin management"""
         admins = self.db.get_admins()
-
+        
         text = "👨‍💼 *Admin Management* 🔽\n⎯ ⎯ ⎯ ⎯\n"
         text += "You can add or remove admins using the buttons below ⚠️"
-
+        
         keyboard = types.InlineKeyboardMarkup()
         for admin_id in admins:
             if admin_id == ADMIN_ID: continue
@@ -431,39 +445,39 @@ class AdminDashboard:
                 keyboard.row(types.InlineKeyboardButton(f"🗑️ {name}", callback_data=f"admin_remove_admin_{admin_id}"))
             except:
                 keyboard.row(types.InlineKeyboardButton(f"🗑️ {admin_id}", callback_data=f"admin_remove_admin_{admin_id}"))
-
+        
         keyboard.row(types.InlineKeyboardButton("➕ Add Admin", callback_data="admin_add_admin"))
         keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_back"))
-
+        
         self.bot.edit_message_text(
             text, call.message.chat.id, call.message.message_id,
             parse_mode='Markdown', reply_markup=keyboard
         )
-
+    
     def show_bot_settings(self, call):
         """Show bot settings"""
         bot_enabled = "✅" if self.db.get_setting('bot_enabled') else "❎"
-
+        
         text = "🔧 *Bot Settings* 🔽\n⎯ ⎯ ⎯ ⎯"
-
+        
         keyboard = types.InlineKeyboardMarkup()
         keyboard.row(types.InlineKeyboardButton(f"Bot Status {bot_enabled}", callback_data="admin_toggle_bot"))
         keyboard.row(types.InlineKeyboardButton("🗑️ Clear Users", callback_data="admin_clear_users"))
         keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_back"))
-
+        
         self.bot.edit_message_text(
             text, call.message.chat.id, call.message.message_id,
             parse_mode='Markdown', reply_markup=keyboard
         )
-
+    
     def show_ban_management(self, call):
         """Show ban management"""
         banned_users = self.db.get_banned_users()
         banned_count = len(banned_users)
-
+        
         text = f"🚫 *Ban Management* 🔽\n⎯ ⎯ ⎯ ⎯\n"
         text += f"Banned Users: {banned_count}"
-
+        
         keyboard = types.InlineKeyboardMarkup()
         keyboard.row(
             types.InlineKeyboardButton("➕ Ban User", callback_data="admin_ban_user"),
@@ -471,34 +485,34 @@ class AdminDashboard:
         )
         keyboard.row(types.InlineKeyboardButton("🗑️ Clear All Bans", callback_data="admin_clear_bans"))
         keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_back"))
-
+        
         self.bot.edit_message_text(
             text, call.message.chat.id, call.message.message_id,
             parse_mode='Markdown', reply_markup=keyboard
         )
-
+    
     def handle_toggle(self, call, data):
         """Handle toggle actions"""
         if data == "admin_toggle_subscription":
             current = self.db.get_setting('subscription_enabled')
             self.db.set_setting('subscription_enabled', not current)
             self.show_subscription_settings(call)
-
+        
         elif data == "admin_toggle_join_notif":
             current = self.db.get_setting('join_notifications')
             self.db.set_setting('join_notifications', not current)
             self.show_notification_settings(call)
-
+        
         elif data == "admin_toggle_forward":
             current = self.db.get_setting('forward_messages')
             self.db.set_setting('forward_messages', not current)
             self.show_notification_settings(call)
-
+        
         elif data == "admin_toggle_bot":
             current = self.db.get_setting('bot_enabled')
             self.db.set_setting('bot_enabled', not current)
             self.show_bot_settings(call)
-
+    
     def handle_ban_unban(self, call, data):
         if data == "admin_ban_user":
             self.admin_states[call.from_user.id] = "waiting_ban_id"
@@ -529,50 +543,31 @@ class AdminDashboard:
                 self.db.unban_user(user_id_to_manage)
                 self.bot.answer_callback_query(call.id, "✅ User unbanned!")
             self.show_ban_management(call)
-
+    
     def handle_specific_admin_action(self, call, data):
         """Handle specific admin actions"""
         if data == "admin_add_channel":
             self.admin_states[call.from_user.id] = "waiting_channel"
             keyboard = types.InlineKeyboardMarkup()
             keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_subscription"))
-
+            
             self.bot.edit_message_text(
                 "📢 Send the channel username without @ (e.g., mychannel) ⏳",
                 call.message.chat.id, call.message.message_id,
                 reply_markup=keyboard
             )
-
-        elif data.startswith("admin_remove_channel_"):
-            ch = data.split("admin_remove_channel_")[1]
-            channels = self.db.get_setting('subscription_channels') or []
-            channels = [c for c in channels if c != ch]
-            self.db.set_setting('subscription_channels', channels)
-            self.bot.answer_callback_query(call.id, "✅ Channel removed!")
-            self.show_subscription_settings(call)
-
-        elif data == "admin_set_required":
-            self.admin_states[call.from_user.id] = "waiting_required_count"
-            keyboard = types.InlineKeyboardMarkup()
-            keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_subscription"))
-
-            self.bot.edit_message_text(
-                "📊 Send the required number of channel subscriptions (1 or more) ⏳",
-                call.message.chat.id, call.message.message_id,
-                reply_markup=keyboard
-            )
-
+        
         elif data == "admin_add_admin":
             self.admin_states[call.from_user.id] = "waiting_admin_id"
             keyboard = types.InlineKeyboardMarkup()
             keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_management"))
-
+            
             self.bot.edit_message_text(
                 "👨‍💼 Send the user ID of the new admin ℹ️",
                 call.message.chat.id, call.message.message_id,
                 reply_markup=keyboard
             )
-
+        
         elif data.startswith("admin_remove_admin_"):
             admin_id = int(data.split("_")[-1])
             if admin_id == ADMIN_ID:
@@ -581,104 +576,88 @@ class AdminDashboard:
             self.db.remove_admin(admin_id)
             self.bot.answer_callback_query(call.id, "✅ Admin removed!")
             self.show_admin_management(call)
-
+        
         elif data == "admin_clear_users":
             self.db.clear_users()
             self.bot.answer_callback_query(call.id, "✅ All users cleared!")
             self.show_bot_settings(call)
-
+        
         elif data == "admin_clear_bans":
             self.db.clear_banned_users()
             self.bot.answer_callback_query(call.id, "✅ All bans cleared!")
             self.show_ban_management(call)
-
+    
     def set_start_message_prompt(self, call):
         """Prompt for start message"""
         self.admin_states[call.from_user.id] = "waiting_start_message"
         current_message = self.db.get_setting('start_message') or "Default welcome message"
-
+        
         keyboard = types.InlineKeyboardMarkup()
         keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_back"))
-
+        
         self.bot.edit_message_text(
             f"📮 Send the new start message ⏳\n\nCurrent message: {current_message}",
             call.message.chat.id, call.message.message_id,
             reply_markup=keyboard
         )
-
+    
     def broadcast_prompt(self, call):
         """Prompt for broadcast message"""
         user_count = self.db.get_user_count()
         self.admin_states[call.from_user.id] = "waiting_broadcast"
-
+        
         keyboard = types.InlineKeyboardMarkup()
         keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_back"))
-
+        
         self.bot.edit_message_text(
             f"📨 Send the message to broadcast ⏳\n\nUsers: {user_count}",
             call.message.chat.id, call.message.message_id,
             reply_markup=keyboard
         )
-
+    
     def handle_message(self, message):
         """Handle admin messages based on state"""
         user_id = message.from_user.id
         state = self.admin_states.get(user_id)
-
+        
         if not state:
             return False
-
+        
         if state == "waiting_channel":
             channel = message.text.strip()
-            channels = self.db.get_setting('subscription_channels') or []
+            channels = self.db.get_setting('subscription_channels')
+            if not isinstance(channels, list):  # This line is added to fix the error
+                channels = []
             if channel not in channels:
                 channels.append(channel)
                 self.db.set_setting('subscription_channels', channels)
-                text = "✅ Channel added successfully!"
+                reply_text = f"✅ Channel '{channel}' added successfully!"
             else:
-                text = "⚠️ Channel already exists!"
+                reply_text = f"❌ Channel '{channel}' is already in the list."
+
             keyboard = types.InlineKeyboardMarkup()
             keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_subscription"))
-
+            
             self.bot.reply_to(
-                message, text,
+                message, reply_text,
                 reply_markup=keyboard
             )
-
+            
             del self.admin_states[user_id]
             return True
-
-        elif state == "waiting_required_count":
-            try:
-                count = int(message.text.strip())
-                if count < 1:
-                    raise ValueError
-                self.db.set_setting('required_subscriptions', count)
-                text = f"✅ Required subscriptions set to {count}!"
-            except ValueError:
-                text = "❌ Please send a valid number (1 or more)!"
-            keyboard = types.InlineKeyboardMarkup()
-            keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_subscription"))
-
-            self.bot.reply_to(
-                message, text,
-                reply_markup=keyboard
-            )
-            del self.admin_states[user_id]
-            return True
-
+        
         elif state == "waiting_admin_id":
             try:
                 admin_id = int(message.text.strip())
                 self.db.add_admin(admin_id)
                 keyboard = types.InlineKeyboardMarkup()
                 keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_management"))
-
+                
                 self.bot.reply_to(
                     message, f"✅ Admin {admin_id} added successfully!",
                     reply_markup=keyboard
                 )
-
+                
                 try:
                     self.bot.send_message(
                         admin_id,
@@ -686,11 +665,11 @@ class AdminDashboard:
                     )
                 except:
                     pass
-
+                
             except ValueError:
                 keyboard = types.InlineKeyboardMarkup()
                 keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_management"))
-
+                
                 self.bot.reply_to(
                     message, "❌ Please send a valid user ID (numbers only)",
                     reply_markup=keyboard
@@ -711,7 +690,7 @@ class AdminDashboard:
                 self.bot.reply_to(message, "❌ Please send a valid user ID (numbers only)", reply_markup=keyboard)
             del self.admin_states[user_id]
             return True
-
+            
         elif state == "waiting_unban_id":
             try:
                 user_id_to_unban = int(message.text.strip())
@@ -725,38 +704,38 @@ class AdminDashboard:
                 self.bot.reply_to(message, "❌ Please send a valid user ID (numbers only)", reply_markup=keyboard)
             del self.admin_states[user_id]
             return True
-
+        
         elif state == "waiting_start_message":
             message_text = message.text
             self.db.set_setting('start_message', message_text)
             keyboard = types.InlineKeyboardMarkup()
             keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_back"))
-
+            
             self.bot.reply_to(
                 message, f"✅ Start message updated to:\n{message_text}",
                 reply_markup=keyboard
             )
             del self.admin_states[user_id]
             return True
-
+        
         elif state == "waiting_broadcast":
             message_text = message.text
             users = self.db.get_users()
-
-
+            
+            
             sent_count = 0
             failed_count = 0
-
+            
             progress_msg = self.bot.reply_to(message, "📨 Broadcasting message...")
-
+            
             for user in users:
                 try:
                     self.bot.send_message(user, message_text, parse_mode='Markdown')
                     sent_count += 1
                 except Exception as e:
                     failed_count += 1
-
-
+                
+                
                 if (sent_count + failed_count) % 10 == 0:
                     try:
                         self.bot.edit_message_text(
@@ -765,10 +744,10 @@ class AdminDashboard:
                         )
                     except:
                         pass
-
+            
             keyboard = types.InlineKeyboardMarkup()
             keyboard.row(types.InlineKeyboardButton("↪️ Back", callback_data="admin_back"))
-
+            
             self.bot.edit_message_text(
                 f"✅ Broadcast completed!\n"
                 f"📤 Sent: {sent_count}\n"
@@ -778,9 +757,9 @@ class AdminDashboard:
             )
             del self.admin_states[user_id]
             return True
-
+        
         return False
-
+        
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -946,34 +925,34 @@ def check_consumption(msisdn, auth_token, cookies, chat_id):
         return None, None, None
 
 def execute_all_scripts(msisdn, auth_token, cookies, chat_id):
-    bot.send_message(chat_id, "WAIT 🫣👀🚀")
+    bot.send_message(chat_id, "WAIT 👀🚀")
     logging.info(f"Executing scripts for user {chat_id}")
-
-
+    
+    
     response_activate1 = submit_order(msisdn, auth_token, cookies, "ACTIVATE", "ALBUMS_FAN_ZONE", chat_id)
     if response_activate1 and response_activate1.status_code == 200:
         bot.send_message(chat_id, "DONE (1/3)✅")
     else:
         bot.send_message(chat_id, "❌ERROR")
-
-    time.sleep(3)
-
-
+    
+    time.sleep(6)
+    
+    
     response_unsubscribe = submit_order(msisdn, auth_token, cookies, "UNSUBSCRIBE_FANZONE", "MAIN_FAN_ZONE", chat_id)
     if response_unsubscribe and response_unsubscribe.status_code == 200:
         bot.send_message(chat_id, "DONE (2/3)✅")
     else:
         bot.send_message(chat_id, "❌ERROR")
-
-    time.sleep(3)
-
-
+    
+    time.sleep(6)
+    
+    
     response_activate2 = submit_order(msisdn, auth_token, cookies, "ACTIVATE", "ALBUMS_FAN_ZONE", chat_id)
     if response_activate2 and response_activate2.status_code == 200:
         bot.send_message(chat_id, "DONE (3/3)✅")
     else:
         bot.send_message(chat_id, "ERROR❌")
-
+    
     bot.send_message(chat_id, "🔄 Package renewed ")
     logging.info(f"Scripts executed successfully for user {chat_id}")
 
@@ -982,112 +961,116 @@ def run_script(chat_id):
     msisdn = session['msisdn']
     email = session['email']
     password = session['password']
-
-
+    
+    
     if False:
         bot.send_message(chat_id, "WAIT.")
 
     logging.info(f"Starting script for user {chat_id}")
-
-
+    
+    
     login_response = login(email, password, chat_id)
     if login_response is None or login_response.status_code != 200:
         bot.send_message(chat_id, "ERROR❌")
         user_sessions[chat_id]['running'] = False
         return
-
+    
     auth_token = login_response.headers.get('auth', '')
     cookies = login_response.headers.get('Set-Cookie', '')
-
+    
     if not auth_token:
         bot.send_message(chat_id, "ERROR❌")
         user_sessions[chat_id]['running'] = False
         return
-
+    
     bot.send_message(chat_id, "Done Login✅")
     execute_all_scripts(msisdn, auth_token, cookies, chat_id)
-
+    
     retry_count = 0
     max_retries = 5 
-
+    
     while user_sessions.get(chat_id, {}).get('running', False):
         try:
-            time.sleep(5)
+            time.sleep(20)
             consumed, remaining, total = check_consumption(msisdn, auth_token, cookies, chat_id)
-
+            
             if consumed is not None and total is not None:
                 percentage_consumed = (consumed / total) * 100
                 logging.info(f"User {chat_id}: Consumption is {percentage_consumed:.2f}%")
-
-
-                if percentage_consumed >= 80:
+                
+                
+                if percentage_consumed >= 70:
                     bot.send_message(chat_id, "⚠️ Package expired")
                     execute_all_scripts(msisdn, auth_token, cookies, chat_id)
             else:
                 logging.warning(f"User {chat_id}: Failed to check consumption, retrying...")
-
+                
                 retry_count += 1
                 if retry_count >= max_retries:
                     bot.send_message(chat_id, "❌ERROR")
                     user_sessions[chat_id]['running'] = False
                     break
-
-
+                
+                
                 login_response = login(email, password, chat_id)
                 if login_response is None or login_response.status_code != 200:
                     bot.send_message(chat_id, "ERROR❌")
                     user_sessions[chat_id]['running'] = False
                     break
-
+                
                 auth_token = login_response.headers.get('auth', '')
                 cookies = login_response.headers.get('Set-Cookie', '')
-
+                
                 if not auth_token:
                     bot.send_message(chat_id, "❌ERROR")
                     user_sessions[chat_id]['running'] = False
                     break
 
-
+            
             time.sleep(10)
 
         except Exception as e:
             logging.error(f"An unexpected error occurred for user {chat_id}: {e}")
             bot.send_message(chat_id, f"❌ERROR: ")
-
+            
             break
-
+            
     logging.info(f"Script for user {chat_id} has stopped.")
 
-def check_subscriptions(user_id):
+def check_subscription(user_id):
     if not db.get_setting('subscription_enabled'):
-        return True
-    channels = db.get_setting('subscription_channels') or []
+        return True, None
+    
+    channels = db.get_setting('subscription_channels')
     if not channels:
-        return True
-    required = db.get_setting('required_subscriptions') or 1
-    subscribed_count = 0
+        return True, None
+        
     for channel in channels:
         try:
             member = bot.get_chat_member(f'@{channel}', user_id)
-            if member.status in ['member', 'administrator', 'creator']:
-                subscribed_count += 1
-        except Exception as e:
-            logging.error(f"Error checking subscription for user {user_id} in channel {channel}: {e}")
-    return subscribed_count >= required
+            if member.status not in ['member', 'administrator', 'creator']:
+                return False, channel
+        except telebot.apihelper.ApiException as e:
+            if 'chat not found' in str(e).lower():
+                logging.error(f"Channel @{channel} not found. Admin needs to check the channel name.")
+            else:
+                logging.error(f"Error checking subscription for user {user_id} in channel @{channel}: {e}")
+            return False, channel
+    return True, None
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     chat_id = message.chat.id
     user_info = message.from_user
-
+    
     if not db.get_setting('bot_enabled') and not db.is_admin(chat_id):
         bot.send_message(chat_id, "❌ The bot is currently disabled by the admin.")
         return
-
+        
     if db.is_banned(chat_id):
         logging.info(f"Banned user {chat_id} tried to start the bot. Ignoring.")
         return
-
+    
     is_new_user = not db.cursor.execute("SELECT 1 FROM users WHERE id=?", (chat_id,)).fetchone()
     db.add_user(chat_id, user_info.first_name, user_info.last_name, user_info.username)
 
@@ -1103,30 +1086,27 @@ def send_welcome(message):
                 bot.send_message(admin_id, user_info_text, parse_mode='Markdown')
             except Exception as e:
                 logging.error(f"Failed to send join notification to admin {admin_id}: {e}")
-
-    if db.get_setting('subscription_enabled'):
-        if not check_subscriptions(chat_id):
-            channels = db.get_setting('subscription_channels') or []
-            required = db.get_setting('required_subscriptions') or 1
-            keyboard = types.InlineKeyboardMarkup()
-            for channel in channels:
-                keyboard.add(types.InlineKeyboardButton(f"Join @{channel}", url=f"https://t.me/{channel}"))
-            bot.send_message(
-                chat_id,
-                f"⚠️ Please join at least {required} of our channels to use the bot.",
-                reply_markup=keyboard
-            )
-            return
+    
+    is_subscribed, missing_channel = check_subscription(chat_id)
+    if not is_subscribed:
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton("Join Channel", url=f"https://t.me/{missing_channel}"))
+        bot.send_message(
+            chat_id,
+            f"⚠️ Please join our channel to use the bot: https://t.me/{missing_channel}",
+            reply_markup=keyboard
+        )
+        return
 
     if chat_id in user_sessions and user_sessions[chat_id].get('running', False):
         bot.send_message(chat_id, "THE BOT IS RUNNIG IF YOU WANT TO STOP IT PRESS STOP")
         return
-
+    
     user_sessions[chat_id] = {'running': False}
     logging.info(f"User {chat_id} started the bot.")
-
+    
     start_message = db.get_setting('start_message')
-
+    
     bot.send_message(chat_id, start_message)
     bot.send_message(chat_id, "📞 SEND MOBILE NUMBER:")
 
@@ -1149,13 +1129,13 @@ def handle_admin_state_message(message):
 @bot.message_handler(func=lambda message: message.text == "STOP🛑")
 def stop_script(message):
     chat_id = message.chat.id
-
+    
     if not db.get_setting('bot_enabled') and not db.is_admin(chat_id):
         return
-
+        
     if db.is_banned(chat_id):
         return
-
+        
     if chat_id in user_sessions and user_sessions[chat_id].get('running', False):
         user_sessions[chat_id]['running'] = False
         bot.send_message(chat_id, "⏹BOT STOPPED", reply_markup=telebot.types.ReplyKeyboardRemove())
@@ -1166,30 +1146,27 @@ def stop_script(message):
 @bot.message_handler(func=lambda message: message.text and not user_sessions.get(message.chat.id, {}).get('msisdn'))
 def get_number(message):
     chat_id = message.chat.id
-
+    
     if not db.get_setting('bot_enabled') and not db.is_admin(chat_id):
         return
-
+        
     if db.is_banned(chat_id):
         return
-
-    if db.get_setting('subscription_enabled'):
-        if not check_subscriptions(chat_id):
-            channels = db.get_setting('subscription_channels') or []
-            required = db.get_setting('required_subscriptions') or 1
-            keyboard = types.InlineKeyboardMarkup()
-            for channel in channels:
-                keyboard.add(types.InlineKeyboardButton(f"Join @{channel}", url=f"https://t.me/{channel}"))
-            bot.send_message(
-                chat_id,
-                f"⚠️ Please join at least {required} of our channels to use the bot.",
-                reply_markup=keyboard
-            )
-            return
+    
+    is_subscribed, missing_channel = check_subscription(chat_id)
+    if not is_subscribed:
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton("Join Channel", url=f"https://t.me/{missing_channel}"))
+        bot.send_message(
+            chat_id,
+            f"⚠️ Please join our channel to use the bot: https://t.me/{missing_channel}",
+            reply_markup=keyboard
+        )
+        return
 
     phone_number = message.text.strip()
-
-
+    
+    
     if phone_number.startswith('0') and len(phone_number) == 11 and phone_number.isdigit():
         processed_number = phone_number[1:]
     elif len(phone_number) == 10 and phone_number.isdigit():
@@ -1197,7 +1174,7 @@ def get_number(message):
     else:
         bot.send_message(chat_id, "❌INVAILD NUMBER! Please send a valid 10 or 11-digit number.")
         return
-
+    
     user_sessions[chat_id]['msisdn'] = processed_number
     logging.info(f"User {chat_id} provided phone number: {processed_number}.")
     bot.send_message(chat_id, "📧ENTER EMAIL:")
@@ -1205,31 +1182,28 @@ def get_number(message):
 @bot.message_handler(func=lambda message: message.text and user_sessions.get(message.chat.id, {}).get('msisdn') and not user_sessions.get(message.chat.id, {}).get('email'))
 def get_email(message):
     chat_id = message.chat.id
-
+    
     if not db.get_setting('bot_enabled') and not db.is_admin(chat_id):
         return
-
+        
     if db.is_banned(chat_id):
         return
 
-    if db.get_setting('subscription_enabled'):
-        if not check_subscriptions(chat_id):
-            channels = db.get_setting('subscription_channels') or []
-            required = db.get_setting('required_subscriptions') or 1
-            keyboard = types.InlineKeyboardMarkup()
-            for channel in channels:
-                keyboard.add(types.InlineKeyboardButton(f"Join @{channel}", url=f"https://t.me/{channel}"))
-            bot.send_message(
-                chat_id,
-                f"⚠️ Please join at least {required} of our channels to use the bot.",
-                reply_markup=keyboard
-            )
-            return
-
+    is_subscribed, missing_channel = check_subscription(chat_id)
+    if not is_subscribed:
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton("Join Channel", url=f"https://t.me/{missing_channel}"))
+        bot.send_message(
+            chat_id,
+            f"⚠️ Please join our channel to use the bot: https://t.me/{missing_channel}",
+            reply_markup=keyboard
+        )
+        return
+        
     if '@' not in message.text or '.' not in message.text:
         bot.send_message(chat_id, "❌INVAILD EMAIL!")
         return
-
+    
     user_sessions[chat_id]['email'] = message.text
     logging.info(f"User {chat_id} provided email.")
     bot.send_message(chat_id, "🔑ENTER PASSWORD:")
@@ -1237,36 +1211,33 @@ def get_email(message):
 @bot.message_handler(func=lambda message: message.text and user_sessions.get(message.chat.id, {}).get('email') and not user_sessions.get(message.chat.id, {}).get('password'))
 def get_password(message):
     chat_id = message.chat.id
-
+    
     if not db.get_setting('bot_enabled') and not db.is_admin(chat_id):
         return
-
+        
     if db.is_banned(chat_id):
         return
 
-    if db.get_setting('subscription_enabled'):
-        if not check_subscriptions(chat_id):
-            channels = db.get_setting('subscription_channels') or []
-            required = db.get_setting('required_subscriptions') or 1
-            keyboard = types.InlineKeyboardMarkup()
-            for channel in channels:
-                keyboard.add(types.InlineKeyboardButton(f"Join @{channel}", url=f"https://t.me/{channel}"))
-            bot.send_message(
-                chat_id,
-                f"⚠️ Please join at least {required} of our channels to use the bot.",
-                reply_markup=keyboard
-            )
-            return
-
+    is_subscribed, missing_channel = check_subscription(chat_id)
+    if not is_subscribed:
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton("Join Channel", url=f"https://t.me/{missing_channel}"))
+        bot.send_message(
+            chat_id,
+            f"⚠️ Please join our channel to use the bot: https://t.me/{missing_channel}",
+            reply_markup=keyboard
+        )
+        return
+    
     if len(message.text) < 4:
         bot.send_message(chat_id, "❌ THE PASSWORD IS TOO SHORT !")
         return
-
+    
     user_sessions[chat_id]['password'] = message.text
     logging.info(f"User {chat_id} provided password. Starting script...")
     bot.send_message(chat_id, "🔄WAIT...........", reply_markup=stop_keyboard)
-
-
+    
+    
     user_sessions[chat_id]['running'] = True
     thread = threading.Thread(target=run_script, args=(chat_id,))
     thread.start()
@@ -1274,20 +1245,19 @@ def get_password(message):
 
 @bot.message_handler(func=lambda message: True)
 def default_handler(message):
-
+    
     if not db.get_setting('bot_enabled') and not db.is_admin(message.chat.id):
         return
-
+        
     if db.is_banned(message.chat.id):
         return
-
-    if db.get_setting('subscription_enabled'):
-        if not check_subscriptions(message.chat.id):
-            return
-
+    
+    is_subscribed, missing_channel = check_subscription(message.chat.id)
+    if not is_subscribed:
+        return
+        
     if not admin_dashboard.handle_message(message):
         bot.send_message(message.chat.id, "ERROR ❌")
-
 
 
 print("V I R U S")
