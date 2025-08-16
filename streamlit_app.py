@@ -15,7 +15,7 @@ import math
 
 
 ADMIN_ID = 706440281
-BOT_TOKEN = "8136616031:AAGRPJ832iKX_J72GglmoyYSdawKJgfrgXI"
+BOT_TOKEN = "8136616031:AAH_fpXoytZqSR5tBLkXYp_dkjJd4VbTpko"
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
